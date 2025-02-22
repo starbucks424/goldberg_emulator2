@@ -3,10 +3,10 @@ name: Build and Deploy
 on:
   push:
     branches:
-      - main
+      - master
   pull_request:
     branches:
-      - main
+      - master
 
 jobs:
   dependencies:
@@ -38,8 +38,6 @@ jobs:
         make clean
         ./configure "CC=gcc-4.9" "CXX=g++-4.9" "CPPFLAGS=-fPIC -Ofast" "CXXFLAGS=-fPIC -Ofast" --prefix=$BASE_PREFIX_PATH/protobuf/prefix/ --disable-shared --enable-static
         make -j8 install
-      outputs:
-        protobuf-path: ${{ steps.clone-and-build.outputs.protobuf-path }}
     
     - name: Upload protobuf artifact
       uses: actions/upload-artifact@v2

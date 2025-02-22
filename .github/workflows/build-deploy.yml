@@ -1,0 +1,185 @@
+name: Build and Deploy
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  dependencies:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+    
+    - name: Install dependencies
+      run: |
+        sudo apt update
+        sudo apt -y install gcc-4.9 g++-4.9 git autotools-dev automake libtool g++-4.9-multilib gcc-4.9-multilib build-essential
+    
+    - name: Clone and build protobuf
+      run: |
+        BASE_PREFIX_PATH=$(pwd)
+        mkdir deps
+        cd deps
+        git clone --branch 21.x https://github.com/protocolbuffers/protobuf.git
+        cd protobuf
+        sh autogen.sh
+        ./configure "CC=gcc-4.9 -m32" "CXX=g++-4.9 -m32"  CPPFLAGS="-fPIC -Ofast" CXXFLAGS="-fPIC -Ofast" --prefix=$BASE_PREFIX_PATH/protobuf/prefix_x86/ --disable-shared --enable-static
+        make -j8 install
+        make clean
+        ./configure "CC=gcc-4.9" "CXX=g++-4.9" "CPPFLAGS=-fPIC -Ofast" "CXXFLAGS=-fPIC -Ofast" --prefix=$BASE_PREFIX_PATH/protobuf/prefix/ --disable-shared --enable-static
+        make -j8 install
+      outputs:
+        protobuf-path: ${{ steps.clone-and-build.outputs.protobuf-path }}
+    
+    - name: Upload protobuf artifact
+      uses: actions/upload-artifact@v2
+      with:
+        name: protobuf
+        path: protobuf/
+
+  build_steamos:
+    needs: dependencies
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+
+    - name: Install dependencies
+      run: |
+        sudo apt update
+        sudo apt -y install gcc-4.9 g++-4.9 git libtool g++-4.9-multilib gcc-4.9-multilib
+    
+    - name: Download protobuf artifact
+      uses: actions/download-artifact@v2
+      with:
+        name: protobuf
+        path: protobuf/
+
+    - name: Build SteamOS
+      run: |
+        ls -lah
+        uname -a
+        sed -i 's/^g++ /g++-4.9 /g' build_steamos.sh
+        sed -i 's/..\/protobuf\/prefix/.\/protobuf\/prefix/g' build_steamos.sh
+        sh build_steamos.sh
+    
+    - name: Upload build artifact
+      uses: actions/upload-artifact@v2
+      with:
+        name: linux-build
+        path: linux/
+
+  build_windows:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+
+    - name: Install dependencies
+      run: |
+        sudo apt update
+        sudo apt -y install wine wget p7zip-full sed dos2unix python3
+
+    - name: Build Windows
+      run: |
+        dnf -y install wine wget p7zip sed dos2unix python
+        unix2dos *.txt
+        unix2dos files_example/*.txt files_example/*/*.txt
+        sed -i 's/..\\vcpkg\\installed\\/.\\protobuf_/g' build_set_protobuf_directories.bat
+        wget 'https://gitlab.com/Mr_Goldberg/goldberg_emulator/uploads/48db8f434a193aae872279dc4f5dde6a/sdk_standalone.7z'
+        wget 'https://gitlab.com/Mr_Goldberg/goldberg_emulator/uploads/0119304e030098b4821d73170fe52084/protobuf_x64-windows-static.7z'
+        wget 'https://gitlab.com/Mr_Goldberg/goldberg_emulator/uploads/4185a97ab363ddc1859127e59ec68581/protobuf_x86-windows-static.7z'
+        7za x protobuf_x86-windows-static.7z -oprotobuf_x86-windows-static
+        7za x protobuf_x64-windows-static.7z -oprotobuf_x64-windows-static
+        7za x sdk_standalone.7z -osdk_standalone
+        DLL_FILES="$(ls dll/*.cpp | tr "\n" " ")"; sed "s|dll/\*.cpp|$DLL_FILES|g" -i *.bat
+        DLL_FILES="$(ls dll/*.proto | tr "\n" " " | sed "s/.proto/.pb.cc/g")"; sed "s|dll/\*.cc|$DLL_FILES|g" -i *.bat
+        sed "s| /MP12 | /MP4 |g" -i *.bat
+        python generate_build_win_bat.py
+        export WINEDEBUG=-all
+        wine cmd /c build_win_release_test.bat
+    
+    - name: Upload build artifact
+      uses: actions/upload-artifact@v2
+      with:
+        name: windows-build
+        path: release/
+
+  deploy_all:
+    needs: [build_steamos, build_windows]
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+
+    - name: Install dependencies
+      run: sudo apt update && sudo apt -y install git tree
+
+    - name: Download artifacts
+      uses: actions/download-artifact@v2
+      with:
+        name: linux-build
+        path: release/linux/
+
+    - name: Download artifacts
+      uses: actions/download-artifact@v2
+      with:
+        name: windows-build
+        path: release/windows/
+
+    - name: Deploy
+      run: |
+        ls -lah
+        mkdir -p release/source_code
+        git bundle create release/source_code/source_code.bundle --all
+        echo "This is a git bundle of the full repo, to use: git clone source_code.bundle --branch master" > release/source_code/Readme.txt
+        mv linux release/
+        shopt -s extglob
+        rm -rf .g*
+        rm -rf !(release)
+        mv release/* ./
+        rm -rf release
+        echo $GITHUB_RUN_ID > job_id
+        tree
+
+    - name: Upload deployment artifact
+      uses: actions/upload-artifact@v2
+      with:
+        name: deployment
+        path: ./
+
+  page_deploy:
+    runs-on: ubuntu-latest
+    needs: deploy_all
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+
+    - name: Download deployment artifact
+      uses: actions/download-artifact@v2
+      with:
+        name: deployment
+        path: ./
+
+    - name: Deploy to GitHub Pages
+      run: |
+        DEPLOY_ALL_JOBID=$(cat job_id)
+        mkdir public
+        cat website/template.html | sed 's|X_LATEST_BUILD_URL_X|https://gitlab.com/Mr_Goldberg/goldberg_emulator/-/jobs/'$DEPLOY_ALL_JOBID'/artifacts/download|g' > public/index.html
+        sed -i 's|X_LATEST_BUILD_COMMIT_HASH_X|'$GITHUB_SHA'|g' public/index.html
+
+    - name: Upload GitHub Pages artifact
+      uses: actions/upload-artifact@v2
+      with:
+        name: github-pages
+        path: public/

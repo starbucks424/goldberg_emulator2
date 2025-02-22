@@ -23,7 +23,7 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt update
-        sudo apt -y install gcc-4.9 g++-4.9 git autotools-dev automake libtool g++-4.9-multilib gcc-4.9-multilib build-essential
+        sudo apt -y install gcc g++ git autotools-dev automake libtool g++-multilib gcc-multilib build-essential
     
     - name: Clone and build protobuf
       run: |
@@ -55,7 +55,7 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt update
-        sudo apt -y install gcc-4.9 g++-4.9 git libtool g++-4.9-multilib gcc-4.9-multilib
+        sudo apt -y install gcc g++ git libtool g++-multilib gcc-multilib
     
     - name: Download protobuf artifact
       uses: actions/download-artifact@v2
@@ -90,7 +90,8 @@ jobs:
 
     - name: Build Windows
       run: |
-        dnf -y install wine wget p7zip sed dos2unix python
+        sudo apt update
+        sudo apt -y install wine wget p7zip-full sed dos2unix python3
         unix2dos *.txt
         unix2dos files_example/*.txt files_example/*/*.txt
         sed -i 's/..\\vcpkg\\installed\\/.\\protobuf_/g' build_set_protobuf_directories.bat

@@ -13,12 +13,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
     - name: Set up Python
       uses: actions/setup-python@v2
       with:
         python-version: '3.8'
+
+    - name: Install build essentials and 32-bit support
+      run: |
+        sudo apt-get update
+        sudo apt-get install build-essential gcc-multilib g++-multilib
     
     - name: Install dependencies
       run: |
